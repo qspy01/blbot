@@ -12,7 +12,7 @@ def get_main_kb(user: UserProfile):
     if user.role == UserRole.ADMIN:
         builder.button(text="⚙️ SYSTEM")
     elif user.role == UserRole.RUNNER:
-        builder.button(text="📍 LOKALIZACJA", request_location=True)
+        builder.button(text="🟢 STATUS: AKTYWNY")
     elif user.role == UserRole.OPERATOR:
         builder.button(text="📥 DODAJ KOD")
     else:
@@ -35,4 +35,3 @@ async def cmd_start(message: types.Message, repo: InMemoryRepository, config: Ap
         reply_markup=get_main_kb(user), 
         parse_mode="Markdown"
     )
-
