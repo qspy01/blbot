@@ -7,20 +7,11 @@ from core.security import SecurityEngine
 
 router = Router()
 
-@router.message(F.location)
-async def handle_location(message: types.Message, repo: InMemoryRepository):
-    uid = message.from_user.id
-    user = repo.get_user(uid)
-    if user and user.role == UserRole.RUNNER:
-        user.is_geo_verified = True
-        repo.save_user(user)
-        await message.answer("✅ Lokalizacja GPS zweryfikowana. Oczekuj na sygnały.")
-
 @router.message(F.text == "📥 DODAJ KOD")
 async def request_blik(message: types.Message, repo: InMemoryRepository):
     user = repo.get_user(message.from_user.id)
     if user and user.role in [UserRole.OPERATOR, UserRole.ADMIN]:
-        await message.answer("Podaj 6-cyfrowy kod BLIK:")
+        await message.answer("Podaj 6-cyfrowy kod:")
 
 @router.message(lambda m: m.text and m.text.isdigit() and len(m.text) == 6)
 async def incoming_blik_signal(message: types.Message, repo: InMemoryRepository, config: AppConfig, settings: SystemSettings, bot: Bot):
@@ -44,16 +35,24 @@ async def incoming_blik_signal(message: types.Message, repo: InMemoryRepository,
     repo.add_active_tx(tx_id, {"code": code, "op_id": uid})
     
     kb = InlineKeyboardBuilder()
-    button_text = "⚡️ PRZEJMIJ SYGNAŁ (GPS)" if settings.gps_required else "⚡️ PRZEJMIJ SYGNAŁ"
-    kb.button(text=button_text, callback_data=f"clm_{tx_id}")
+    kb.button(text="⚡️ PRZEJMIJ SYGNAŁ", callback_data=f"clm_{tx_id}")
     
-    await bot.send_message(
-        config.GROUP_ID, 
-        f"🚨 **NOWY SYGNAŁ**\nID: `{tx_id}`\nOczekiwanie na podjęcie...", 
-        reply_markup=kb.as_markup(),
-        parse_mode="Markdown"
-    )
-    await message.answer(f"✅ Kod wprowadzony do sieci. ID: `{tx_id}`", parse_mode="Markdown")
+    # Broadcast kodu do każdego Runnera i Admina na czacie prywatnym
+    powiadomiono = 0
+    for u_id, u_data in repo._users.items():
+        if u_data.role in [UserRole.RUNNER, UserRole.ADMIN]:
+            try:
+                await bot.send_message(
+                    u_id,
+                    f"🚨 **NOWY SYGNAŁ**\nID: `{tx_id}`\nOczekiwanie na podjęcie...",
+                    reply_markup=kb.as_markup(),
+                    parse_mode="Markdown"
+                )
+                powiadomiono += 1
+            except Exception:
+                continue
+                
+    await message.answer(f"✅ Kod wprowadzony do sieci. ID: `{tx_id}`\nPowiadomiono Runnerów: {powiadomiono}", parse_mode="Markdown")
 
 @router.callback_query(lambda c: c.data.startswith("clm_"))
 async def claim_signal(callback: types.CallbackQuery, repo: InMemoryRepository, settings: SystemSettings, bot: Bot, config: AppConfig):
@@ -61,11 +60,8 @@ async def claim_signal(callback: types.CallbackQuery, repo: InMemoryRepository, 
     user = repo.get_user(uid)
     tx_id = callback.data.split("_")[1]
     
-    if not user or user.role != UserRole.RUNNER:
+    if not user or user.role not in [UserRole.RUNNER, UserRole.ADMIN]:
         return await callback.answer("Brak uprawnień do przejęcia kodu.", show_alert=True)
-    
-    if settings.gps_required and not user.is_geo_verified:
-        return await callback.answer("❌ Najpierw potwierdź lokalizację GPS (w menu).", show_alert=True)
     
     tx_data = repo.get_tx(tx_id)
     if not tx_data:
@@ -120,4 +116,3 @@ async def finalize_tx(callback: types.CallbackQuery, bot: Bot):
         await callback.message.edit_reply_markup(reply_markup=None)
         await callback.message.reply("Zgłoszono błąd do operatora.")
     await callback.answer()
-
