@@ -1,0 +1,69 @@
+version: '3.8'
+services:
+  db:
+    image: postgres:15-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: ssij_dev
+      POSTGRES_PASSWORD: sekretnehaslo
+      POSTGRES_DB: ssij_db
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ssij_dev"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: always
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.api
+    container_name: ssij_api
+    restart: always
+    volumes:
+      - ./backend/app:/app
+      - ./downloads:/app/downloads
+    ports:
+      - "8000:8000"
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.worker
+    container_name: ssij_worker
+    restart: always
+    volumes:
+      - ./backend/app:/app
+      - ./downloads:/app/downloads
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - PROXY_URL=${PROXY_URL}
+    depends_on:
+      redis:
+        condition: service_healthy
+    command: celery -A worker.celery_app worker --loglevel=info
+
+  frontend:
+    build:
+      context: ./frontend
+    container_name: ssij_frontend
+    restart: always
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend/src:/app/src
+    depends_on:
+      - api
